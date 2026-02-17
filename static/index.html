@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Transcription Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .upload-area {
+            transition: all 0.3s ease;
+        }
+        .upload-area.drag-over {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen py-12 px-4">
+    <div class="max-w-2xl mx-auto">
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">Video Transcription Tool</h1>
+            <p class="text-gray-600 mb-8">Upload a video file to generate SRT subtitles</p>
+            
+            <!-- Upload Area -->
+            <div id="uploadArea" class="upload-area border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer hover:border-blue-400 transition-colors">
+                <input type="file" id="fileInput" accept="video/*,audio/*" class="hidden">
+                <div id="uploadContent">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <p class="mt-4 text-lg text-gray-600">Click to upload or drag and drop</p>
+                    <p class="mt-2 text-sm text-gray-500">Video or audio files (MP4, AVI, MP3, WAV, etc.)</p>
+                </div>
+                <div id="fileName" class="mt-4 text-sm text-gray-700 font-medium hidden"></div>
+            </div>
+            
+            <!-- Progress Bar -->
+            <div id="progressContainer" class="mt-6 hidden">
+                <div class="flex justify-between items-center mb-2">
+                    <span id="statusText" class="text-sm font-medium text-gray-700">Processing...</span>
+                    <span id="progressPercent" class="text-sm font-medium text-gray-700">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <!-- Error Message -->
+            <div id="errorMessage" class="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg hidden">
+                <p class="text-sm text-red-800" id="errorText"></p>
+            </div>
+            
+            <!-- Download Button -->
+            <div id="downloadContainer" class="mt-6 hidden">
+                <button id="downloadBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors">
+                    Download SRT File
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentJobId = null;
+        let pollInterval = null;
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadContent = document.getElementById('uploadContent');
+        const fileName = document.getElementById('fileName');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressPercent = document.getElementById('progressPercent');
+        const statusText = document.getElementById('statusText');
+        const errorMessage = document.getElementById('errorMessage');
+        const errorText = document.getElementById('errorText');
+        const downloadContainer = document.getElementById('downloadContainer');
+        const downloadBtn = document.getElementById('downloadBtn');
+
+        // Upload area click
+        uploadArea.addEventListener('click', () => {
+            if (!currentJobId) {
+                fileInput.click();
+            }
+        });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if (!currentJobId) {
+                uploadArea.classList.add('drag-over');
+            }
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            if (!currentJobId && e.dataTransfer.files.length > 0) {
+                handleFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        async function handleFile(file) {
+            // Reset UI
+            hideError();
+            downloadContainer.classList.add('hidden');
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressPercent.textContent = '0%';
+            statusText.textContent = 'Uploading...';
+
+            // Show file name
+            fileName.textContent = file.name;
+            fileName.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Upload failed');
+                }
+
+                const data = await response.json();
+                currentJobId = data.job_id;
+                statusText.textContent = 'Processing...';
+                
+                // Start polling
+                startPolling();
+            } catch (error) {
+                showError(error.message);
+                resetUI();
+            }
+        }
+
+        function startPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/status/${currentJobId}`);
+                    if (!response.ok) {
+                        throw new Error('Failed to get status');
+                    }
+
+                    const data = await response.json();
+                    
+                    // Update progress
+                    const progress = data.progress || 0;
+                    progressBar.style.width = `${progress}%`;
+                    progressPercent.textContent = `${progress}%`;
+
+                    // Update status text
+                    if (data.status === 'processing') {
+                        statusText.textContent = 'Transcribing audio...';
+                    } else if (data.status === 'completed') {
+                        statusText.textContent = 'Completed!';
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        
+                        // Show download button
+                        downloadContainer.classList.remove('hidden');
+                        progressContainer.classList.add('hidden');
+                        
+                        // Auto-download
+                        downloadSRT();
+                    } else if (data.status === 'error') {
+                        throw new Error(data.error || 'Processing failed');
+                    }
+                } catch (error) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    showError(error.message);
+                    resetUI();
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        async function downloadSRT() {
+            try {
+                const response = await fetch(`${API_BASE}/download/${currentJobId}`);
+                if (!response.ok) {
+                    throw new Error('Download failed');
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'transcript.srt';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        downloadBtn.addEventListener('click', downloadSRT);
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorMessage.classList.add('hidden');
+        }
+
+        function resetUI() {
+            currentJobId = null;
+            fileName.classList.add('hidden');
+            progressContainer.classList.add('hidden');
+            downloadContainer.classList.add('hidden');
+            uploadContent.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
+
