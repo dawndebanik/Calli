@@ -1,4 +1,4 @@
-# Video Editor - Audio Transcription Tool
+# Calli - Audio Transcription Tool
 
 A professional Python tool for extracting audio from video files and generating timed transcripts using OpenAI Whisper or faster-whisper.
 
